@@ -10,7 +10,7 @@ import gsap from 'gsap';
 
 // --- Configuration ---
 const CONFIG = {
-    starCount: 100000,
+    starCount: 50000,
     textLine1: "Happy 1st Wedding Anniversary",
     textLine2: "05/01/2024 - 05/01/2025",
     transitionDuration: 3,
@@ -24,7 +24,8 @@ const CONFIG = {
     zoomedInZ: 40,
     zoomedOutZ: 120,
     imageCount: 10,
-    trailLength: 20
+    trailLength: 20,
+    fallingStarsCount: 100
 };
 
 // --- Global State ---
@@ -275,7 +276,7 @@ trailMesh.layers.enable(BLOOM_LAYER);
 scene.add(trailMesh);
 
 for (let i = 1; i <= CONFIG.imageCount; i++) {
-    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(5, 5), new THREE.MeshBasicMaterial({ map: textureLoader.load(`/assets/images/${i}.jpg`), side: THREE.DoubleSide, transparent: true }));
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(5, 5), new THREE.MeshBasicMaterial({ map: textureLoader.load(`assets/images/${i}.jpg`), side: THREE.DoubleSide, transparent: true }));
     const radius = 60 + Math.random() * 15; // 3/4 of universe radius (80)
     const angle = Math.random() * Math.PI * 2;
     const y = (Math.random() - 0.5) * 30;
@@ -299,6 +300,21 @@ for (let i = 1; i <= CONFIG.imageCount; i++) {
         trailPositions: Array.from({ length: CONFIG.trailLength }, () => new THREE.Vector3())
     });
 }
+
+// --- Falling Stars (Text State only) ---
+const fallingStarsGeometry = new THREE.SphereGeometry(0.15, 4, 4);
+const fallingStarsMaterial = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 2, transparent: true, opacity: 0.8 });
+const fallingStarsMesh = new THREE.InstancedMesh(fallingStarsGeometry, fallingStarsMaterial, CONFIG.fallingStarsCount);
+fallingStarsMesh.layers.enable(BLOOM_LAYER);
+scene.add(fallingStarsMesh);
+
+const fallingStarsData = Array.from({ length: CONFIG.fallingStarsCount }, () => ({
+    x: (Math.random() - 0.5) * 400,
+    y: (Math.random() - 0.5) * 300,
+    z: (Math.random() - 0.5) * 100 + 40,
+    vx: 0.2 + Math.random() * 0.3,
+    vy: -0.2 - Math.random() * 0.3
+}));
 
 function triggerTransition(toText) {
     if (isAnimatingTransition) return;
@@ -380,6 +396,25 @@ function animate() {
     }
     stars.instanceMatrix.needsUpdate = true;
 
+    for (let i = 0; i < CONFIG.fallingStarsCount; i++) {
+        const d = fallingStarsData[i];
+        if (isTextState) {
+            d.x += d.vx;
+            d.y += d.vy;
+            if (d.x > 200 || d.y < -150) {
+                d.x = -200 + Math.random() * 50;
+                d.y = 150 + Math.random() * 50;
+            }
+            dummy.position.set(d.x, d.y, d.z);
+            dummy.scale.setScalar(1);
+        } else {
+            dummy.scale.setScalar(0);
+        }
+        dummy.updateMatrix();
+        fallingStarsMesh.setMatrixAt(i, dummy.matrix);
+    }
+    fallingStarsMesh.instanceMatrix.needsUpdate = true;
+
     let trailGlobalIndex = 0;
     for (let i = 0; i < CONFIG.imageCount; i++) {
         const mesh = imageMeshes[i];
@@ -402,7 +437,7 @@ function animate() {
             } else {
                 mesh.position.y += data.riseSpeed * 0.016;
                 // Start scaling out as it nears the top
-                if (mesh.position.y > 40 && mesh.scale.x > 0 && !data.isScalingOut) {
+                if (mesh.position.y > 40 && mesh.material.opacity > 0 && !data.isScalingOut) {
                     data.isScalingOut = true;
                     gsap.to(mesh.material, {
                         opacity: 0, duration: 1, onComplete: () => {
@@ -423,15 +458,29 @@ function animate() {
             }
         }
         if (mesh.visible) mesh.lookAt(camera.position);
-        for (let j = CONFIG.trailLength - 1; j > 0; j--) data.trailPositions[j].copy(data.trailPositions[j - 1]);
-        data.trailPositions[0].copy(mesh.position);
-        for (let j = 0; j < CONFIG.trailLength; j++) {
-            const tPos = data.trailPositions[j];
-            dummy.position.copy(tPos);
-            if (isTextState) dummy.position.y -= j * 0.2;
-            dummy.scale.setScalar(1.0 - (j / CONFIG.trailLength));
-            dummy.updateMatrix();
-            trailMesh.setMatrixAt(trailGlobalIndex++, dummy.matrix);
+
+        // Trail Logic
+        if (isTextState) {
+            // In text view, trail is strictly behind (below) the image
+            for (let j = 0; j < CONFIG.trailLength; j++) {
+                dummy.position.copy(mesh.position);
+                dummy.position.y -= j * 0.5; // Stream downwards
+                dummy.position.z -= 0.1; // Slightly behind plane
+                dummy.scale.setScalar((1.0 - (j / CONFIG.trailLength)) * 1.5);
+                dummy.updateMatrix();
+                trailMesh.setMatrixAt(trailGlobalIndex++, dummy.matrix);
+            }
+        } else {
+            // In universe view, use old billboarding trail logic
+            for (let j = CONFIG.trailLength - 1; j > 0; j--) data.trailPositions[j].copy(data.trailPositions[j - 1]);
+            data.trailPositions[0].copy(mesh.position);
+            for (let j = 0; j < CONFIG.trailLength; j++) {
+                const tPos = data.trailPositions[j];
+                dummy.position.copy(tPos);
+                dummy.scale.setScalar(1.0 - (j / CONFIG.trailLength));
+                dummy.updateMatrix();
+                trailMesh.setMatrixAt(trailGlobalIndex++, dummy.matrix);
+            }
         }
     }
     trailMesh.instanceMatrix.needsUpdate = true;
